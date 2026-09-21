@@ -1,6 +1,4 @@
-for (int i = 0; i < 10; ++i) {
-    delete[] arr[i];
-}# ECE 309: Project 2 — The Conversation Loop
+# ECE 309: Project 2 — The Conversation Loop
 **Weight:** 15% of project grade | **Duration:** Weeks 2–4
 
 ## 1. Project Overview & Learning Goals
