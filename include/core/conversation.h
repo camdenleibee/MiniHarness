@@ -1,8 +1,9 @@
-// include/core/conversation.h
-
+#pragma once
+#include "core/message.h"
+#include <cstd
 class Conversation {
 public:
-    // You must implement the Rule of Five:
+    Conversation() = default;
     ~Conversation();
     Conversation(const Conversation& other);
     Conversation& operator=(const Conversation& other);
