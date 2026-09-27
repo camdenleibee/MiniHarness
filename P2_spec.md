@@ -5,13 +5,13 @@
 
 An LLM harness is the program that sits between a language model and the outside world. A raw language model can only produce text. The harness is what turns that text into an agent: it maintains conversation history, decides when a session is over, handles token streaming, and manages user input loops.
 
-In Project 1, you will build the core execution loop (`miniharness`) from scratch in C++. 
+In Project 2, you will build the core memory and streaming components for the execution loop (`miniharness`) in C++.
 
 ```text
                  ┌──────────────────────────────────────────────┐
                  │                  Harness                     │
                  │  ┌────────────────────────────────────────┐  │
-   user input ──►│  │            run loop  (P1)              │  │
+   user input ──►│  │            run loop  (P2)              │  │
                  │  └───┬───────────────────────┬────────────┘  │
                  │      │                       │               │
                  │      ▼                       ▼               │
@@ -26,10 +26,12 @@ In Project 1, you will build the core execution loop (`miniharness`) from scratc
 ```
 
 **Learning Goals:**
-* Design an abstract base class and program against the interface.
-* Manage object lifetime with `std::unique_ptr` and destructors. 
-* Implement a sequence container (growable array) and reason about its amortized cost.
-* Solve a real streaming problem: detect a multi-character sentinel in a character stream that arrives in arbitrary chunks.
+* Implement a sequence container (growable array) and reason rigorously about its amortized cost — this is the central exercise of the project.
+* Manage object lifetime with the Rule of Five: deep-copy semantics, pointer-stealing move semantics, and exception-safe destruction.
+* Solve a real streaming problem: detect a multi-character sentinel in a character stream that arrives in arbitrary chunks, using bounded memory.
+* Read and correctly use a polymorphic interface (`ModelClient`) and a provided execution loop (`Harness`) without modifying either.
+
+**What's provided vs. what's yours.** Both `ModelClient` implementations (`ScriptedModelClient`, `ReplayModelClient`) and the full `Harness::run()` loop — including `main.cpp` and the terminal I/O — are given to you as working, compiled starter code. In a real harness, `ModelClient` would wrap an HTTP call to a model API that hands you characters back; here it's a `.script` file that does the same job, so your tests stay deterministic. Your job is `Conversation` and `SentinelScanner`. Read §3.3 and §3.5 to understand what the provided code expects from you — not to reimplement it.
 
 ---
 
@@ -57,11 +59,22 @@ assistant> Goodbye.
 5. **Transcript Output:** Passing `--save transcript.txt` writes the full conversation to disk, such that feeding it back through `ReplayModelClient` reproduces the session exactly.
 6. **Clean Shutdown:** Pressing Ctrl-D (EOF) on standard input ends the conversation gracefully and still writes the transcript.
 
+**Note on command-line arguments.** The provided `main.cpp` fully handles parsing all command-line flags (`--max-turns`, `--script`, `--save`). You do not need to write the CLI parsing logic — your focus is strictly on making sure `Conversation` and `SentinelScanner` behave correctly when the provided loop uses them.
+
 ---
 
 ## 3. Architecture & Class Design
 
-You must implement the following classes. You are programming against these specific interfaces to ensure your codebase is ready for Project 2.
+The table below says who writes what. For classes marked **provided**, the header *and* implementation are given in the starter repo — read them, don't rewrite them. For classes marked **you implement**, only the public interface is fixed; you choose the private representation.
+
+| Class | Status |
+|---|---|
+| `Message` | You implement (trivial) |
+| `Conversation` | **You implement — the core of P2** |
+| `SentinelScanner` | You implement |
+| `ModelClient`, `TokenSink` | Provided |
+| `ScriptedModelClient`, `ReplayModelClient` | Provided |
+| `Harness`, `InputSource`, `OutputSink`, `main.cpp` | Provided |
 
 ### 3.1 The `Message` Class (`core/message.h`)
 Messages must carry a role and string content. Because your conversation history will allocate an array of these, you must provide a default constructor.
@@ -71,11 +84,15 @@ enum class Role { System, User, Assistant };
 
 class Message {
 public:
-    Message(); // Required to initialize empty array slots
+    // Default-constructs an empty System message with empty content.
+    // Needed so Conversation can allocate raw array slots before
+    // append() fills them in.
+    Message();
+
     Message(Role role, std::string content);
 
-    Role               role()    const noexcept;
-    const std::string& content() const noexcept;
+    Role               role()    const noexcept;  // Who sent this message.
+    const std::string& content() const noexcept;  // The message text.
 
 private:
     Role        role_;
@@ -91,17 +108,37 @@ This class is the *only* place in your entire codebase where raw `new` and `dele
 ~~~cpp
 class Conversation {
 public:
-    // You must implement the Rule of Five:
+    // Empty conversation: size() == 0, no allocation yet.
+    Conversation();
+
+    // Releases all owned Message storage. No effect if already empty
+    // (e.g. moved-from).
     ~Conversation();
+
+    // Deep copy: allocates its own buffer and copies every Message.
+    // this->begin() must differ from other.begin() afterward.
     Conversation(const Conversation& other);
     Conversation& operator=(const Conversation& other);
+
+    // Steals other's buffer — no per-element copying. Afterward, other
+    // must be left valid and empty (safe to destroy or reassign).
     Conversation(Conversation&& other) noexcept;
     Conversation& operator=(Conversation&& other) noexcept;
 
+    // Appends m, growing the backing array if needed. Amortized O(1) —
+    // document and justify your growth strategy in the design log
+    // (see Appendix C if you want a refresher first).
     void append(Message m);
 
-    std::size_t    size() const noexcept;
+    // Number of messages currently stored.
+    std::size_t size() const noexcept;
+
+    // Bounds-checked access. Decide what happens on i >= size() (throw,
+    // assert, whatever you pick) and test that behavior explicitly.
     const Message& at(std::size_t i) const;
+
+    // Range-for iteration, oldest message first. begin() == end() when
+    // size() == 0.
     const Message* begin() const noexcept;
     const Message* end()   const noexcept;
 
@@ -114,7 +151,10 @@ private:
 * **Memory Management:** You must obey the Rule of Five. Your copy semantics must perform deep copies. Your move semantics must steal the pointer and zero out the source object. 
 * **Amortized Cost:** You must document your chosen growth factor and prove the amortized $O(1)$ cost of the `append` operation in your Design Log.
 
-### 3.3 The Model Interface (`model/model_client.h`)
+### 3.3 The Model Interface (`model/model_client.h`) — Provided
+
+`ModelClient` and its two implementations are given, fully working, in the starter repo. In a real harness this wraps an HTTP call to a model API that streams characters back; here `ScriptedModelClient` reads a `.script` file and `ReplayModelClient` replays a transcript, so your tests stay deterministic. You call these classes; you do not modify or subclass them.
+
 ~~~cpp
 struct StopReason {
     enum class Kind { Sentinel, TurnLimit, UserExit, ClientError } kind;
@@ -131,15 +171,39 @@ public:
 class ModelClient {
 public:
     virtual ~ModelClient() = default;
-
     virtual void generate(const Conversation& conv, TokenSink& sink) = 0;
-    Message generate(const Conversation& conv); 
+    Message generate(const Conversation& conv);
 };
 ~~~
-* **C++ Name Hiding:** This uses the Non-Virtual Interface (NVI) idiom. When you subclass `ModelClient` (e.g., for `ScriptedModelClient`) and override the virtual `generate` function, C++ will hide the non-virtual version. You must use `using ModelClient::generate;` in your derived classes to prevent compiler errors.
+
+**Sample usage** — roughly what the provided `Harness::run()` does internally:
+
+~~~cpp
+class PrintingSink : public TokenSink {
+public:
+    void on_chunk(std::string_view chunk) override { std::cout << chunk; }
+    void on_complete() override { std::cout << "\n"; }
+};
+
+ScriptedModelClient model("scripts/greeting.script");
+Conversation conv;
+conv.append(Message(Role::User, "hello"));
+
+PrintingSink sink;
+model.generate(conv, sink);   // streams the reply through on_chunk/on_complete
+~~~
+
+(Optional background: if you're curious *why* `ModelClient` is shaped this way, see Appendix B. Not needed to complete P2.)
 
 ### 3.4 The `SentinelScanner` (`core/sentinel_scanner.h`)
-This class consumes chunks, emits text guaranteed not to be part of the sentinel, and reports when the sentinel is found.
+
+The model streams its reply in arbitrary-sized pieces, and the stop sentinel `<|end_conversation|>` can land anywhere relative to those piece boundaries. `SentinelScanner` incrementally tracks "is any of what I've seen so far the start of the sentinel?" without holding the whole reply in memory.
+
+Your scanner needs to handle three shapes of input correctly:
+
+1. **Whole sentinel in one chunk** — `feed("Goodbye.<|end_conversation|>")` emits `"Goodbye."` as safe text and reports `sentinel_found = true`.
+2. **Sentinel split at one arbitrary point across two chunks** — e.g. `feed("Goodbye.<|end_")` then `feed("conversation|>")`. The first call must not emit the partial sentinel as safe, and must not falsely report a match yet.
+3. **Sentinel arriving one character at a time** — same as (2), split at every possible boundary. This is what the autograder stress-tests.
 
 ~~~cpp
 class SentinelScanner {
@@ -147,19 +211,52 @@ public:
     explicit SentinelScanner(std::string sentinel);
 
     struct Out { std::string safe_text; bool sentinel_found; };
+
+    // Feed the next chunk. Returns text guaranteed NOT to be part of
+    // the sentinel (safe to print immediately) and whether the
+    // sentinel has now been fully seen.
     Out feed(std::string_view chunk);
-    Out flush();       
+
+    // Call once, after the stream ends, to release any text still
+    // being held back.
+    Out flush();
 
 private:
     std::string sentinel_;
-    std::string pending_;   
+    std::string pending_;   // holds back at most sentinel_.size() - 1
+                             // trailing characters that could still
+                             // become the start of the sentinel
 };
 ~~~
-* **Bounded Memory:** You must prove in your log that `pending_` never exceeds `sentinel_.size() - 1` characters. A naive approach of concatenating all chunks into one string creates an $O(N^2)$ memory leak and will fail the autograder stress tests.
-* **Stretch Goal:** Replace the naive scanner approach with the **Knuth-Morris-Pratt (KMP)** algorithm and measure the performance difference on adversarial input (e.g., streaming `<|end_<|end_<|end_...`).
 
-### 3.5 The `Harness` (`harness/harness.h`)
+The approach that satisfies all three scenarios: keep at most `sentinel_.size() - 1` trailing characters in `pending_` at all times. On each `feed`, treat `pending_ + chunk` as the text to search; if the sentinel isn't found, everything except the last `sentinel_.size() - 1` characters is safe to emit, and the remainder becomes the new `pending_`. Prove in your design log that `pending_` never grows past that bound — that bound is what makes this O(1) space per chunk instead of the O(N²) blowup from concatenating everything and re-searching from scratch.
+
+*Stretch goal, not required:* replace this with Knuth–Morris–Pratt and measure the difference on adversarial input like `<|end_<|end_<|end_...`.
+
+### 3.5 The `Harness` (`harness/harness.h`) — Provided
+
+The full turn loop — reading user input, calling the model, running the reply through `SentinelScanner`, appending both turns to the `Conversation`, checking the turn limit, handling EOF — is given as working code, along with `main.cpp` and terminal `InputSource`/`OutputSink` implementations. Read it: it's the reference for how `Conversation` and `SentinelScanner` are actually used together.
+
 ~~~cpp
+struct HarnessConfig {
+    int max_turns = 20;
+    std::string system_message;
+
+};
+
+class InputSource {
+public:
+    virtual ~InputSource() = default;
+    virtual std::string read_line() = 0;
+    virtual bool is_eof() const = 0;
+};
+
+class OutputSink {
+public:
+    virtual ~OutputSink() = default;
+    virtual void write(std::string_view text) = 0;
+};
+
 class Harness {
 public:
     Harness(std::unique_ptr<ModelClient> model, HarnessConfig cfg);
@@ -171,7 +268,6 @@ private:
     HarnessConfig                cfg_;
 };
 ~~~
-* **Logic Requirement:** Inside `run()`, you must append the user's input to the `Conversation`. When the model finishes streaming, you must gather that streamed text and append it as an Assistant message. If you do not save the assistant's reply, your transcripts will be incomplete.
 
 ---
 
@@ -179,8 +275,7 @@ private:
 
 Review these common mistakes before submitting, as they are the most frequent causes of failed test cases:
 1. **Ownership Issues:** Storing `Message*` in the conversation and letting the caller keep ownership. Ownership must be unambiguous. 
-2. **Sentinel Leaks:** Printing the reply to the terminal *before* checking for the sentinel, resulting in `<|end_conversation|>` leaking to the user.
-3. **Shallow Copies:** A `Conversation` copy constructor that copies the pointer instead of the buffer. This causes a double-free at scope exit which AddressSanitizer will immediately flag.
+2. **Shallow Copies:** A `Conversation` copy constructor that copies the pointer instead of the buffer. This causes a double-free at scope exit which AddressSanitizer will immediately flag.
 
 ---
 
@@ -217,28 +312,46 @@ Your repository must be built with CMake and compile cleanly under AddressSaniti
 │   ├── harness.cpp
 │   └── main.cpp
 ├── tests/
-│   └── p1/
-│       └── test_p1.cpp
+│   └── p2/
+│       └── test_p2.cpp
 └── docs/
-    └── design-log-p1.md
+    └── design-log-p2.md
 ```
 
-**Test Suite Requirements (`tests/p1/test_p1.cpp`):**
-You must write at least 12 assert-based test cases covering:
+**Test Suite Requirements (`tests/p2/test_p2.cpp`):**
+You must write at least 12 assert-based test cases. Weight your effort toward `Conversation` and `SentinelScanner` — that's your code. The `Harness`-related items confirm you've wired the provided pieces correctly, not logic you wrote yourself.
+
 1. **Empty Conversation Bounds:** Handle empty conversations without out-of-bounds access.
 2. **System Message Ordering:** Ensure system messages remain pinned at the front.
-3. **Rule of Five (Copy):** Assert that copy constructors allocate entirely different pointer addresses.
-4. **Rule of Five (Move):** Assert that move constructors successfully steal the data pointer and zero the source.
-5. **Scanner (Clean Text):** Verify the scanner processes strings with no sentinel correctly.
-6. **Scanner (Split Sentinel):** Prove the scanner catches the sentinel when split across *every possible boundary* (programmatically loop over all split points).
-7. **Scanner (False Alarms):** Ensure the scanner does not trigger on partial matches (e.g., `<|end_world|>`).
-8. **Harness (Turn Limit):** Assert the loop stops cleanly with the correct `TurnLimit` reason.
-9. **Harness (EOF):** Assert the loop handles `Ctrl-D` mid-conversation.
-10. **Harness (Sentinel Halt):** Assert the loop halts exactly when the sentinel is emitted.
-11. **Clean Destruction:** Ensure the harness destructs gracefully without throwing exceptions or memory leaks.
-12. **Transcript Round-Trip:** Save a mock conversation to a `.txt` file, load it via `ReplayModelClient`, and assert it plays back identically.
+3. **Rule of Five (Copy):** Assert copy constructors allocate entirely different pointer addresses.
+4. **Rule of Five (Move):** Assert move constructors steal the data pointer and zero the source.
+5. **Growth behavior:** Assert capacity grows per your documented growth factor and `size()`/`at()` stay correct across reallocation.
+6. **Scanner (Clean Text):** Verify the scanner processes strings with no sentinel correctly.
+7. **Scanner (Split Sentinel):** Prove the scanner catches the sentinel split across *every possible boundary* (loop over all split points programmatically).
+8. **Scanner (False Alarms):** Ensure the scanner doesn't trigger on partial matches (e.g., `<|end_world|>`).
+9. **Scanner (Bounded Memory):** Assert `pending_` never exceeds `sentinel.size() - 1` while feeding a large adversarial stream.
+10. **Harness (Turn Limit):** Confirm the provided loop stops with `TurnLimit` when your `Conversation` is used underneath it.
+11. **Harness (Sentinel Halt):** Confirm the provided loop halts exactly when your `SentinelScanner` reports the sentinel found.
+12. **Transcript Round-Trip:** Save a mock conversation, load it via the provided `ReplayModelClient`, assert identical playback.
 
-**Design Log (`docs/design-log-p1.md`):**
+**Sample test**, showing the expected rigor for item 7:
+
+~~~cpp
+TEST(ScannerCatchesSentinelAtEveryBoundary) {
+    const std::string sentinel = "<|end_conversation|>";
+    const std::string text = "Goodbye." + sentinel;
+    for (std::size_t split = 0; split <= text.size(); ++split) {
+        SentinelScanner scanner(sentinel);
+        auto out1 = scanner.feed(text.substr(0, split));
+        auto out2 = scanner.feed(text.substr(split));
+        assert((out1.sentinel_found || out2.sentinel_found) &&
+               "sentinel must be caught regardless of split point");
+        assert(out1.safe_text + out2.safe_text == "Goodbye.");
+    }
+}
+~~~
+
+**Design Log (`docs/design-log-p2.md`):**
 A 500–800 word Markdown document defending your design. It must cover:
 * Your growth factor choice and the proof of amortized $O(1)$ insertions.
 * Evidence of how your code handles the Rule of Five safely.
@@ -255,14 +368,16 @@ A 500–800 word Markdown document defending your design. It must cover:
 
 | Criterion | Points | Evaluation |
 |---|---|---|
-| **Loop Semantics** | 25 | Automated tests checking turn limits, EOF, and stopping. |
-| **ModelClient & Interfaces** | 15 | Code inspection ensuring no downcasting in the loop. |
-| **Rule of Five & Memory Safety** | 20 | Automated tests compiled with AddressSanitizer (must show 0 leaks). |
-| **Sentinel Bounded Memory** | 20 | Stress test feeding 4MB streams one byte at a time. |
-| **Test Suite Quality** | 10 | Manual review of your 12 test cases. |
+| **Rule of Five & Memory Safety** | 35 | Automated tests under AddressSanitizer (0 leaks); deep-copy and steal-on-move verified. |
+| **Amortized Growth** | 10 | Design log: growth factor documented and amortized O(1) proven. |
+| **Sentinel Bounded Memory** | 25 | Stress test feeding a 4MB stream one byte at a time; `pending_` bound verified. |
+| **Correct Use of Provided Harness/ModelClient** | 10 | Tests confirm turn limit, EOF, and sentinel-halt behavior when your classes run under the provided loop. |
+| **Test Suite Quality** | 10 | Manual review of your test cases. |
 | **Design Log** | 10 | Evaluation of your amortized math and buffer proofs. |
 
 ## 7. Appendix A — Transcript and Script Format
+
+*(Reference only — this format is produced/consumed by the provided `ScriptedModelClient`/`ReplayModelClient`/`Harness`. You don't need to write a parser for it.)*
 
 The `.script` files (input) and `transcript.txt` files (output) are line-oriented, with one message per block. Blocks are separated by a line containing exactly `---`.
 
@@ -301,3 +416,21 @@ This will stream 5 characters at a time.<|end_conversation|>
 * **`chunk: N`** — Forces the `ScriptedModelClient` to emit the reply in chunks of `N` characters. This is how you test that your `SentinelScanner` correctly handles sentinels split across chunks. *If omitted, the default behavior is to emit the entire message as a single chunk.*
 * **Block Exhaustion:** If the `ScriptedModelClient` is asked to generate a reply but has exhausted all of its available scripted blocks, it must trigger a loop termination and yield a `ClientError` StopReason.
 * **`match: /pattern/i`** — *(Optional Stretch Goal)* Allows the scripted client to select a reply by matching a regex pattern against the most recent user message. Assume the default `std::regex` flavor (ECMAScript) is used. **Semantics:** Search proceeds top-to-bottom through the unconsumed blocks. The first block whose pattern matches wins. A block without a `match` directive acts as an unconditional catch-all default. If you do not implement branching, your client can simply ignore `match` directives and read the blocks sequentially.
+
+## 8. Appendix B — Optional Background: Abstract Base Classes and Virtual Functions
+
+You don't need this to complete P2 — `ModelClient` and its subclasses are provided. Read it if you want to understand *why* the provided code is shaped the way it is.
+
+A pure virtual function (`virtual void generate(...) = 0;`) has no body in the class that declares it — it just states "every subclass must implement this." A class with even one pure virtual function is *abstract*: you cannot write `ModelClient m;`, only `ScriptedModelClient s;` or `ReplayModelClient r;`, each providing its own body for `generate`.
+
+`override` on a subclass's method is a compiler check, not a requirement of the language — it just confirms you're actually replacing a virtual function with a matching signature, rather than accidentally declaring a new, unrelated one.
+
+`ModelClient` also has a second, non-virtual `generate(const Conversation&)` that calls the virtual one internally. Because C++ hides *all* overloads of a name once you override any of them, a subclass that overrides the virtual `generate` makes the non-virtual one invisible from outside — unless you write `using ModelClient::generate;` in that subclass to bring it back into scope. This pattern (virtual low-level function, non-virtual convenience wrapper in the base) is called the Non-Virtual Interface idiom, and it's why you'll see that `using` line in the spec.
+
+## 9. Appendix C — Primer: Growable Arrays and Growth Factor
+
+A growable array like `Conversation` starts with some `capacity_` and, when `append` is called with `size_ == capacity_`, must allocate a bigger buffer, move the existing elements over, and free the old one. The *growth factor* is how much bigger the new buffer is — double it (`new_capacity = capacity_ == 0 ? 1 : capacity_ * 2`), grow by 1.5x, or something else.
+
+Why not grow by a fixed amount (e.g., +1 each time)? Every `append` would then trigger a reallocation, and each reallocation copies all existing elements — for `n` appends that's `1 + 2 + ... + n = O(n^2)` total copying.
+
+Doubling avoids this: the reallocation at size `k` copies `k` elements, but is followed by roughly `k` more appends before the next reallocation (since capacity just doubled). The copying cost of each reallocation is "paid for" by the appends that follow it, so the total copying across `n` appends is `O(n)`, not `O(n^2)` — `O(1)` amortized per `append`. You'll need to write this argument out precisely for your design log, and you're free to pick a factor other than exactly 2 — just justify it and prove the bound holds for whatever you choose.

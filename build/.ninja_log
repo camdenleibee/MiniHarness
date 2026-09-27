@@ -1,11 +1,17 @@
 # ninja log v5
-4	854	1790212147886164383	CMakeFiles/test_p2.dir/src/model_client.cpp.o	e486a22e7248975f
-2	977	1790212148010163513	CMakeFiles/miniharness.dir/src/model_client.cpp.o	ec078fe84f7bd2e6
-1	1104	1790212148134162655	CMakeFiles/miniharness.dir/src/conversation.cpp.o	6e72217a21b85a1
-3	1266	1790212148298161521	CMakeFiles/test_p2.dir/src/conversation.cpp.o	cae3949d1f7b8a2d
-5	1344	1790212148378160968	CMakeFiles/test_p2.dir/tests/p2/test_p2.cpp.o	6e6798d12d1d3b1d
-5	1393	1790212148426160636	CMakeFiles/test_p2.dir/src/replay_client.cpp.o	c04b0216cd1ace92
-4	1463	1790212148498160139	CMakeFiles/test_p2.dir/src/scripted_client.cpp.o	99f82eb01bc4b6d
-2	1787	1790212148818157926	CMakeFiles/miniharness.dir/src/scripted_client.cpp.o	6cc0a25de0450229
-3	1889	1790212148922157207	CMakeFiles/miniharness.dir/src/main.cpp.o	2d979ad4fd5b595c
-3	1924	1790212148958156957	CMakeFiles/miniharness.dir/src/replay_client.cpp.o	62df4ded472d1f6b
+2	1312	1790212490402058986	CMakeFiles/miniharness.dir/src/scripted_client.cpp.o	6cc0a25de0450229
+2	1146	1790212490230058744	CMakeFiles/miniharness.dir/src/replay_client.cpp.o	62df4ded472d1f6b
+3	396	1790212429030101969	CMakeFiles/test_p2.dir/src/sentinel_scanner.cpp.o	1cb0aceac05ef358
+1	398	1790212429034101977	CMakeFiles/miniharness.dir/src/sentinel_scanner.cpp.o	9ab6ee312848ad9d
+3	727	1790212489822058180	CMakeFiles/test_p2.dir/src/model_client.cpp.o	e486a22e7248975f
+4	1733	1790212490826059583	CMakeFiles/test_p2.dir/src/scripted_client.cpp.o	99f82eb01bc4b6d
+6	1355	1790212490446059049	CMakeFiles/test_p2.dir/tests/p2/test_p2.cpp.o	6e6798d12d1d3b1d
+1629	1991	1790212491082059949	miniharness	66d09fe12656060e
+5	1331	1790212490422059015	CMakeFiles/test_p2.dir/src/replay_client.cpp.o	c04b0216cd1ace92
+6	1430	1790212490522059155	CMakeFiles/test_p2.dir/src/harness.cpp.o	3cc9266342ea7433
+3	1399	1790212490490059110	CMakeFiles/miniharness.dir/src/main.cpp.o	2d979ad4fd5b595c
+3	1030	1790212490122058592	CMakeFiles/test_p2.dir/src/conversation.cpp.o	cae3949d1f7b8a2d
+2	1629	1790212490722059437	CMakeFiles/miniharness.dir/src/harness.cpp.o	24cc098f6c83cc34
+1	1007	1790212490098058558	CMakeFiles/miniharness.dir/src/conversation.cpp.o	6e72217a21b85a1
+1	744	1790212489838058202	CMakeFiles/miniharness.dir/src/model_client.cpp.o	ec078fe84f7bd2e6
+1733	2034	1790212491126060013	test_p2	2f8ecf402020d24d

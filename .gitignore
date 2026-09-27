@@ -1,0 +1,57 @@
+# Prerequisites and Object Files
+*.o
+*.obj
+*.d
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Dynamic / Shared Libraries
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+bin/
+
+# Build Directories (CMake & Manual Builds)
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# IDE and Editor Directories
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*~
+
+# Debugger, Profiler, and Test Artifacts
+*.dSYM/
+*.su
+*.idb
+*.pdb
+Testing/
+CTestTestfile.cmake
+test_detail.xml
+
+# OS-Specific Metadata
+.DS_Store
+Thumbs.db

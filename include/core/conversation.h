@@ -1,19 +1,35 @@
 #pragma once
 #include "core/message.h"
-#include <cstd
+#include <cstddef>
 class Conversation {
 public:
-    Conversation() = default;
+    // Empty conversation: size() == 0, no allocation yet.
+    Conversation();
+
+    // Releases all owned Message storage.
     ~Conversation();
+
+    // Deep copy: allocates its own buffer and copies every Message.
     Conversation(const Conversation& other);
     Conversation& operator=(const Conversation& other);
+
+    // Steals other's buffer — no per-element copying. Afterward, other
+    // must be left valid and empty (safe to destroy or reassign).
     Conversation(Conversation&& other) noexcept;
     Conversation& operator=(Conversation&& other) noexcept;
 
+    // Appends m, growing the backing array if needed. 
     void append(Message m);
 
-    std::size_t    size() const noexcept;
+    // Number of messages currently stored.
+    std::size_t size() const noexcept;
+
+    // Bounds-checked access. Decide what happens on i >= size() (throw,
+    // assert, whatever you pick) and test that behavior explicitly.
     const Message& at(std::size_t i) const;
+
+    // Range-for iteration, oldest message first. begin() == end() when
+    // size() == 0.
     const Message* begin() const noexcept;
     const Message* end()   const noexcept;
 
