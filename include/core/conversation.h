@@ -3,8 +3,8 @@
 #include <cstddef>
 class Conversation {
 public:
-    // Empty conversation: size() == 0, no allocation yet.
-    Conversation();
+    // default constructor
+    Conversation() = default;
 
     // Releases all owned Message storage.
     ~Conversation();

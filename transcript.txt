@@ -2,7 +2,7 @@ role: system
 Be concise.
 ---
 role: user
-test
+test, hello, you
 ---
 role: assistant
 I am doing well, thank you! How can I help you?
